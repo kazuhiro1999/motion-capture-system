@@ -103,7 +103,7 @@ class BackgroundSubtractorGPU:
 
         cp.ones(2)*2
 
-    def apply(self, image, crop_region=None, crop_size=None, threshold=15):
+    def apply(self, image, crop_region=None, crop_size=None, threshold=15, return_mask=False):
         if self.background is None:
             return image
         background = crop_and_resize(self.background, crop_region, crop_size)
@@ -126,11 +126,146 @@ class BackgroundSubtractorGPU:
         mask = cv2.medianBlur(mask_cpu.astype(np.float32), 5)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel=cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5)))
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel=cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)))
+        if return_mask:
+            return np.where(mask==0, 0, 1)
+        
         foreground = (image * mask[:,:,None]).astype(np.uint8)
-
         return foreground
 
+
+import asyncio
+
+def execute_async(func, *args, **kwargs):
+    loop = asyncio.get_event_loop()
+    return loop.run_in_executor(None, func, *args, **kwargs)
+
+from scipy.optimize import least_squares
+
+class Tuner:
+    def __init__(self, num_samples=5):
+        self.num_samples = num_samples
+        self.segmentation = Segmentation()
+        self.reset()
+
+    def reset(self):
+        self.slot = None
+        self.active = False
+        self.isWaiting = False
+        self.optimizing = False
+        self.images = []
+        self.crops = []
+        self.seg_masks = []
+        self.sub_masks = []
+        self.process_end = False
+        self.queue = []
+        self.text = None
+        self.score = 0
+
+    def activate(self, slot, text):
+        # sampling start
+        self.slot = slot
+        self.text = text
+        self.text.update('Sampling Images ...')
+        self.active = True
+        return
+
+    def process(self):
+        if self.isWaiting:
+            return 
+        if len(self.queue) > 0:
+            img = self.queue.pop(0)
+            cv2.imshow(f'sample {len(self.seg_masks)}', img)
+        if len(self.seg_masks) >= self.num_samples:
+            if not self.optimizing:
+                self.optimizing = True
+                self.text.update('Optimizing Params ...')
+                execute_async(self.optimize)
+            else:
+                return
+        else:
+            frame = self.slot.get_image()
+            crop_region = self.slot.crop_region
+            self.images.append(frame)
+            self.crops.append(crop_region)
+            img = crop_and_resize(frame, crop_region=crop_region, crop_size=[224,224]).astype(np.uint8)
+
+            self.isWaiting = True
+            execute_async(self.detect_person, img)
+
+    def detect_person(self, image):
+        img = image.copy()
+        mask = self.segmentation.detect_person(img)
+        self.seg_masks.append(mask)
+        self.queue.append((image*mask[:,:,None]).astype(np.uint8))
+        self.isWaiting = False
+
+    def optimize(self):
+        subtractor = self.slot.background_subtractor
+
+        def func(a_min, a_max, c_min, c_max):
+            subtractor.a_min = a_min
+            subtractor.a_max = a_max
+            subtractor.c_min = c_min
+            subtractor.c_max = c_max
+
+            loss = 0
+            for image, crop_region, seg_mask in zip(self.images, self.crops, self.seg_masks):
+                mask = subtractor.apply(image, crop_region, [224,224], return_mask=True)
+                precision = np.count_nonzero(mask & seg_mask) / np.count_nonzero(mask)
+                recall = np.count_nonzero(mask & seg_mask) / np.count_nonzero(seg_mask)
+                f1 = 2*precision*recall/(precision+recall)
+                loss += (1-f1)
+            return loss / self.num_samples
+
+        d = 0.05
+        l_min = 100
+        for _a_min in np.linspace(0.5,1,11):
+            for _a_max in np.linspace(_a_min,1.5,int((1.5-_a_min)/d)+1):
+                _c_min = 0
+                _c_max = 30
+                #for _c_min in np.linspace(0,12,4):
+                    #for _c_max in np.linspace(_c_min,30,int((30-_a_min)/6)+1):
+                loss = func(_a_min, _a_max, _c_min, _c_max)
+                if loss < l_min:
+                    l_min = loss
+                    a_min = _a_min
+                    a_max = _a_max
+                    c_min = _c_min
+                    c_max = _c_max
+        
+        subtractor.a_min = a_min
+        subtractor.a_max = a_max
+        subtractor.c_min = c_min
+        subtractor.c_max = c_max  
+        self.score = (1-loss)*100
+        self.process_end = True
+        return
+
+
+import torch
+import torchvision.transforms as T
    
+class Segmentation:
+    def __init__(self):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model = torch.hub.load('pytorch/vision:v0.9.0', 'deeplabv3_resnet101', pretrained=True)
+        self.model.eval()
+
+    def detect_person(self, image):
+        h,w = image.shape[:2]
+        trf = T.Compose([
+            T.ToPILImage(),
+            T.Resize(800),
+            T.ToTensor(),
+            T.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225])
+        ])
+        inpt = trf(image).unsqueeze(0).to(self.device)
+        out = self.model.to(self.device)(inpt)['out']
+        mask = torch.argmax(out.squeeze(), dim=0).detach().byte().cpu().numpy()
+        mask = cv2.resize(mask, (w,h))
+        mask = np.where(mask==15,1,0)
+        return mask
+
 
 def rgb_to_gray(image):
     assert (image.ndim == 3 or image.ndim == 4)

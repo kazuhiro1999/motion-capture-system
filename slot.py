@@ -12,12 +12,17 @@ class Slot:
         self.isActive = False
         self.isPlaying = False
         self.frame = None
-        self.draw_image = False
+        self.draw_image = True
+        self.image_size = None
         self.background_subtractor = BackgroundSubtractorGPU()
         self.subtract = False
         self.pose_estimation = False
         self.crop_region = init_crop_region(1080,1920)
+        self.draw_crop_area = False
         self.draw_keypoints2d = False
+        self.keypoints2d = None
+        self.camera_setting = None
+        self.proj_matrix = None
 
         if config is not None:
             self.load_config(config)
@@ -41,7 +46,10 @@ class Slot:
         if cap.isOpened():
             self.video_path = video_path
             self.cap = cap
+            self.mode = 'video'
             self.isActive = True
+            self.isPlaying = False
+            self.init_frame()
             return True
         else:
             return False
@@ -58,18 +66,50 @@ class Slot:
         if cap.isOpened():
             self.camera_id = camera_id
             self.cap = cap
+            self.mode = 'camera'
             self.isActive = True
+            self.isPlaying = True
+            self.init_frame()
             return True
         else:
             return False
 
-    def read(self):
+    def init_frame(self):
         if self.cap is not None:
             ret, frame = self.cap.read()
             if ret:
                 self.frame = frame
+
+    def read(self):
+        if self.cap is not None and self.isPlaying:
+            ret, frame = self.cap.read()
+            if ret:
+                self.frame = frame
                 return (True, frame)
+            else: 
+                return (False, None)
+        elif self.isPlaying == False and self.mode == 'video':
+            return (True, self.frame)
         return (False, None)
+
+    def set_frame(self, i):
+        if self.cap is not None and self.mode == 'video':
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, i)
+            self.init_frame()
+
+    def get_frame_length(self):
+        if self.cap is not None and self.mode == 'video':
+            return self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        else:
+            return 0
+
+    def set_size(self, size):
+        if size == 'Auto':
+            self.image_size = None
+        else:
+            W,H = size.split('x')
+            W,H = int(W),int(H)
+            self.image_size = (W,H)
 
     def get_image(self):
         return self.frame
@@ -81,6 +121,7 @@ class Slot:
     def get_config(self):
         cfg = {
             'name' : self.name, 
+            'camera_id' : self.camera_id,
             'video_path' : self.video_path,
             'background_path' : self.background_subtractor.img_path,
             'a_min' : self.background_subtractor.a_min,
