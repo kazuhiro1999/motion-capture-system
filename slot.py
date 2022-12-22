@@ -1,5 +1,6 @@
 import cv2
 from preprocess import BackgroundSubtractor, BackgroundSubtractorGPU
+from calibration import CameraSetting
 from detector import init_crop_region
 
 class Slot:
@@ -17,11 +18,12 @@ class Slot:
         self.background_subtractor = BackgroundSubtractorGPU()
         self.subtract = False
         self.pose_estimation = False
+        self.isDetected = False
         self.crop_region = init_crop_region(1080,1920)
         self.draw_crop_area = False
         self.draw_keypoints2d = False
         self.keypoints2d = None
-        self.camera_setting = None
+        self.camera_setting = CameraSetting()
         self.proj_matrix = None
 
         if config is not None:

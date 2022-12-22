@@ -30,6 +30,8 @@ KEYPOINT_DICT = {
     'right_ankle': 16
 }
 
+SKELETON = [(0,1),(1,2),(0,3),(3,4),(5,7),(7,9),(6,8),(8,10),(5,11),(6,12),(11,12),(11,13),(13,15),(12,14),(14,16)]
+
 def detect_keypoints(heatmaps, method='average'):
     N,H,W,K = heatmaps.shape
     i = np.arange(56)
@@ -39,7 +41,7 @@ def detect_keypoints(heatmaps, method='average'):
     for heatmap in heatmaps:
         for k in range(K):
             c = heatmap[:,:,k].max()
-            if c < 0.2:
+            if c < MIN_CROP_KEYPOINT_SCORE:
                 x.append(0)
                 y.append(0)
                 confidence.append(0)
@@ -146,10 +148,12 @@ def determine_crop_region(keypoints, image_height, image_width):
         crop_corner = [center_y - crop_length_half, center_x - crop_length_half];
 
         if crop_length_half > max(image_width, image_height) / 2:
-            return init_crop_region(image_height, image_width)
+            return True, init_crop_region(image_height, image_width)
+        elif crop_corner[0] < 0 or crop_corner[1] < 0:
+            return True, init_crop_region(image_height, image_width)
         else:
             crop_length = crop_length_half * 2;
-            return {
+            return True, {
                 'y_min': crop_corner[1] / image_height,
                 'x_min': crop_corner[0] / image_width,
                 'y_max': (crop_corner[1] + crop_length) / image_height,
@@ -158,7 +162,7 @@ def determine_crop_region(keypoints, image_height, image_width):
                 'width': (crop_corner[0] + crop_length) / image_width - crop_corner[0] / image_width
             }
     else:
-        return init_crop_region(image_height, image_width)
+        return False, init_crop_region(image_height, image_width)
 
    
 # クロップ領域を画面最大で横移動

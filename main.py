@@ -1,13 +1,16 @@
-from tkinter import E
+
 import cv2
 import PySimpleGUI as sg
+
+from calibration import CalibrationWindow
+from core import Session, run_interface
+from detector import determine_crop_region, transform_keypoints
 from slot import Slot
-from tools import Checkpoint, draw_crop_area, draw_keypoints2d
+from tools import Checkpoint, draw_crop_area, draw_keypoints2d, draw_skeleton
 from triangulate import NoiseRemover, Triangulator
 from udp_server import UDPServer, keypoints3d_to_data
-from window import CameraParameterWindow, CameraWindow, MainWindow, PerformanceWindow, SettingWindow
-from core import Session, run_interface
-from detector import transform_keypoints, determine_crop_region
+from window import (CameraParameterWindow, CameraWindow, MainWindow,
+                    PerformanceWindow, SettingWindow)
 
 crop_size = [224,224]
 
@@ -22,6 +25,7 @@ camera_window = CameraWindow()
 background_window = SettingWindow()
 parameter_window = CameraParameterWindow(settings_path='camera_settings.json')
 performance_window = PerformanceWindow()
+calibration_window = CalibrationWindow()
 
 session = Session('models/pose2d_mobile_gray_random_100.onnx', 'gpu')
 triangulator = Triangulator(slots)
@@ -50,18 +54,19 @@ while True:
                 #image = slot.background_subtractor.detect_person(image, crop_region=slot.crop_region, crop_size=crop_size)
                 image = slot.background_subtractor.apply(image, crop_region=slot.crop_region, crop_size=crop_size)
                 checkpoint.check(f'{slot.name}-background-subtraction')
-            # 姿勢推定
-            if slot.pose_estimation:
-                keypoints2d = run_interface(session, image) # shape:(N,1,17,3)
-                slot.keypoints2d = transform_keypoints(keypoints2d, H, W, slot.crop_region, crop_size)
-                checkpoint.check(f'{slot.name}-pose-estimation')
-                slot.crop_region = determine_crop_region(slot.keypoints2d, H, W)
+                # 姿勢推定
+                if slot.pose_estimation:
+                    keypoints2d = run_interface(session, image) # shape:(N,1,17,3)
+                    slot.keypoints2d = transform_keypoints(keypoints2d, H, W, slot.crop_region, crop_size)
+                    checkpoint.check(f'{slot.name}-pose-estimation')
+                    slot.isDetected, slot.crop_region = determine_crop_region(slot.keypoints2d, H, W)
             # 描画
             if slot.draw_crop_area:
                 if slot.draw_keypoints2d:
                     image = frame.copy()
                     image = draw_keypoints2d(image, slot.keypoints2d, s=5)
-                    image = draw_crop_area(image, slot.crop_region)
+                    image = draw_skeleton(image, slot.keypoints2d)
+                    image = draw_crop_area(image, slot.isDetected, slot.crop_region)
                 if slot.draw_image:
                     if slot.image_size is not None:
                         image = cv2.resize(image, dsize=slot.image_size)
@@ -69,6 +74,7 @@ while True:
             else:  
                 if slot.draw_keypoints2d:
                     image = draw_keypoints2d(image, keypoints2d[0,0])
+                    image = draw_skeleton(image, keypoints2d[0,0])
                 if slot.draw_image:
                     if slot.image_size is not None and not slot.subtract:
                         image = cv2.resize(image, dsize=slot.image_size)
@@ -129,6 +135,8 @@ while True:
         parameter_window.open(slot)
     if action == 'Performance':
         performance_window.open(keys=checkpoint.keys)
+    if action == 'Calibration':
+        calibration_window.open([slot for slot in slots if slot.isActive])
     if action == 'Triangulation':
         triangulator.isActive = values[event]
     if action == 'Smoothing':
@@ -153,6 +161,9 @@ while True:
         event, values = performance_window.window.read(0)
         if event is None:
             performance_window.close()
+
+    if calibration_window.isActive:
+        calibration_window.handle()
 
 window.save_config('config.json')
 for slot in slots:

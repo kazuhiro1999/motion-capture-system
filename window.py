@@ -1,7 +1,6 @@
 import time
 import cv2
 import PySimpleGUI as sg
-from slot import Slot
 import numpy as np
 import json
 
@@ -15,6 +14,7 @@ class MainWindow:
         layout = [
             [self.get_frame_layout(slot.name) for slot in self.slots],
             [sg.Button('▶', enable_events=True, key=f'Main-Play:Pause')],
+            [sg.Button('カメラキャリブレーション', enable_events=True, key=f'Main-Calibration')],
             [sg.Checkbox('3次元復元を適用する', enable_events=True, key='Main-Triangulation'),
              sg.Combo(['average', 'weighted'], default_value='average', enable_events=True, key='Main-TriangulateMethod')],
             [sg.Checkbox('時系列平滑化を適用する', enable_events=True, key='Main-Smoothing')],

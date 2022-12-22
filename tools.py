@@ -1,5 +1,6 @@
 import time
 import cv2
+from detector import SKELETON
 
 class Checkpoint:
     def __init__(self, keys=[]):
@@ -37,16 +38,31 @@ class Clock:
 
 
 def draw_keypoints2d(image, keypoints2d, s=3, min_score=0.2):
+    if keypoints2d is None:
+        return image
     for x,y,c in keypoints2d:
         if c > min_score:
             cv2.circle(image, center=(int(x),int(y)), radius=s, color=(0,0,255))
     return image
 
-def draw_crop_area(image, crop_region):
+def draw_skeleton(image, keypoints2d, min_score=0.2):
+    if keypoints2d is None:
+        return image
+    for j,k in SKELETON:
+        if keypoints2d[j,2] > min_score and keypoints2d[k,2] > min_score:
+            x1,y1 = keypoints2d[j,:2]
+            x2,y2 = keypoints2d[k,:2]
+            cv2.line(image, (int(x1),int(y1)), (int(x2),int(y2)), color=(0,0,255))
+    return image
+
+def draw_crop_area(image, isdetected, crop_region):
     H,W = image.shape[:2]
     x1 = int(crop_region['x_min'] * W)
     y1 = int(crop_region['y_min'] * H)
     x2 = int(crop_region['x_max'] * W)
     y2 = int(crop_region['y_max'] * H)
-    cv2.rectangle(image, (x1,y1), (x2,y2), color=(0,0,255), thickness=3)
+    if isdetected:
+        cv2.rectangle(image, (x1,y1), (x2,y2), color=(0,255,0), thickness=3)
+    else:
+        cv2.rectangle(image, (x1,y1), (x2,y2), color=(0,0,255), thickness=3)
     return image
